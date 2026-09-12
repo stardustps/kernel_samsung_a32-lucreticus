@@ -7,6 +7,9 @@
  */
 
 #include <linux/module.h>
+#include <linux/init.h>
+#include <linux/fs.h>
+#include <linux/limits.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
@@ -15,6 +18,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 
+#include "mount.h"
 #include "nomount.h"
 
 static bool nomount_enabled = true;

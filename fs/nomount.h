@@ -1,9 +1,13 @@
 #ifndef _FS_NOMOUNT_H
 #define _FS_NOMOUNT_H
 
+#include <linux/types.h>
+#include <linux/compiler.h>
 #include <linux/seq_file.h>
 #include <linux/mount.h>
 #include <linux/path.h>
+
+struct mount;
 
 #ifdef CONFIG_NOMOUNT
 bool nomount_should_hide_mnt(struct vfsmount *mnt);
