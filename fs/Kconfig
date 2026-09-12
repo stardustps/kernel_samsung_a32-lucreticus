@@ -316,4 +316,11 @@ source "fs/nls/Kconfig"
 source "fs/dlm/Kconfig"
 source "fs/unicode/Kconfig"
 
+config NOMOUNT
+	bool "NoMount mountpoint hiding hooks"
+	default n
+	help
+	  Hide sensitive mountpoints from /proc mounts visibility and
+	  provide VFS mount/umount hooks plus /proc/nomount_enabled.
+
 endmenu
