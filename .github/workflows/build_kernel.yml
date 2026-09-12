@@ -21,6 +21,24 @@ on:
           - balance
           - battery
           - all
+      opt:
+        description: 'Compiler optimization level'
+        required: true
+        default: 'O3'
+        type: choice
+        options:
+          - O2
+          - O3
+      droidspaces:
+        description: 'Add Droidspaces container support?'
+        required: true
+        default: true
+        type: boolean
+      nomount:
+        description: 'Add nomount mountpoint-hiding hooks?'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: write
@@ -41,7 +59,7 @@ jobs:
           fi
 
   build:
-    name: Build Kernel ${{ matrix.profile }} ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
+    name: Build Kernel ${{ matrix.profile }} ${{ inputs.opt }} ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
     needs: setup
     runs-on: ubuntu-latest
     strategy:
@@ -91,8 +109,8 @@ jobs:
           export LD=$TC/bin/ld.lld
           export CC=$TC/bin/clang
           export ARCH=arm64
-          export KCFLAGS=' -w -pipe -O3'
-          export KCPPFLAGS=' -O3'
+          export KCFLAGS=" -w -pipe -${{ inputs.opt }}"
+          export KCPPFLAGS=" -${{ inputs.opt }}"
           export CONFIG_SECTION_MISMATCH_WARN_ONLY=y
           export CFGDIR=arch/arm64/configs
           rm -f $CFGDIR/compiled_defconfig
@@ -102,6 +120,35 @@ jobs:
           fi
           if [ "${{ inputs.ksu }}" = "true" ]; then
             cat $CFGDIR/ksu.config >> $CFGDIR/compiled_defconfig
+          fi
+          if [ "${{ inputs.nomount }}" != "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_NOMOUNT
+          fi
+          if [ "${{ inputs.droidspaces }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_SYSVIPC \
+              --enable CONFIG_POSIX_MQUEUE \
+              --enable CONFIG_IPC_NS \
+              --enable CONFIG_USER_NS \
+              --enable CONFIG_CGROUP_NET_PRIO \
+              --enable CONFIG_DEVTMPFS \
+              --enable CONFIG_TMPFS_POSIX_ACL \
+              --enable CONFIG_TMPFS_XATTR \
+              --enable CONFIG_NF_TABLES \
+              --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+          else
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_SYSVIPC \
+              --disable CONFIG_POSIX_MQUEUE \
+              --disable CONFIG_IPC_NS \
+              --disable CONFIG_USER_NS \
+              --disable CONFIG_CGROUP_NET_PRIO \
+              --disable CONFIG_DEVTMPFS \
+              --disable CONFIG_TMPFS_POSIX_ACL \
+              --disable CONFIG_TMPFS_XATTR \
+              --disable CONFIG_NF_TABLES \
+              --disable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
           fi
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
@@ -125,11 +172,17 @@ jobs:
       - name: Create Flashable Zip
         run: |
           cd sta7dust
+          SUFFIX="${{ matrix.profile }}-${{ inputs.opt }}"
           if [ "${{ inputs.ksu }}" = "true" ]; then
-            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-ksu-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
-          else
-            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
+            SUFFIX="$SUFFIX-ksu"
           fi
+          if [ "${{ inputs.droidspaces }}" = "true" ]; then
+            SUFFIX="$SUFFIX-ds"
+          fi
+          if [ "${{ inputs.nomount }}" = "true" ]; then
+            SUFFIX="$SUFFIX-nm"
+          fi
+          zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-$SUFFIX-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
           ls -lh ../lucreticus-lrc1-*.zip
 
       - name: Send Telegram Notification
@@ -141,10 +194,20 @@ jobs:
           else
             KSU_STATUS="no"
           fi
+          if [ "${{ inputs.droidspaces }}" = "true" ]; then
+            DS_STATUS="yes"
+          else
+            DS_STATUS="no"
+          fi
+          if [ "${{ inputs.nomount }}" = "true" ]; then
+            NM_STATUS="yes"
+          else
+            NM_STATUS="no"
+          fi
           echo "MD5=$MD5" >> $GITHUB_ENV
           echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14\nkernelsu integrated: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$KSU_STATUS" "$MD5" "${{ github.sha }}")
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "${{ inputs.opt }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$MD5" "${{ github.sha }}")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$ZIP" \
