@@ -48,6 +48,11 @@ on:
           - none
           - thin
           - full
+      zen:
+        description: 'Use Zen I/O scheduler as default?'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -173,6 +178,11 @@ jobs:
               --disable CONFIG_THINLTO \
               --enable CONFIG_LTO_NONE
           fi
+          if [ "${{ inputs.zen }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_IOSCHED_ZEN \
+              --enable CONFIG_DEFAULT_ZEN
+          fi
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
           echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
@@ -205,6 +215,9 @@ jobs:
           if [ "${{ inputs.nomount }}" = "true" ]; then
             SUFFIX="$SUFFIX-nm"
           fi
+          if [ "${{ inputs.zen }}" = "true" ]; then
+            SUFFIX="$SUFFIX-zen"
+          fi
           if [ "${{ inputs.lto }}" = "thin" ]; then
             SUFFIX="$SUFFIX-thinlto"
           elif [ "${{ inputs.lto }}" = "full" ]; then
@@ -232,10 +245,15 @@ jobs:
           else
             NM_STATUS="no"
           fi
+          if [ "${{ inputs.zen }}" = "true" ]; then
+            ZEN_STATUS="zen"
+          else
+            ZEN_STATUS="cfq"
+          fi
           echo "MD5=$MD5" >> $GITHUB_ENV
           echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$MD5" "${{ github.sha }}")
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$MD5" "${{ github.sha }}")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$ZIP" \
