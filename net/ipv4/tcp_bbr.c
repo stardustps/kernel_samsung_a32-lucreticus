@@ -1,17 +1,18 @@
-/* Bottleneck Bandwidth and RTT (BBRv3) congestion control
+/* Bottleneck Bandwidth and RTT (BBR) congestion control
  *
- * BBRv3 congestion control computes the sending rate based on the delivery
+ * BBR congestion control computes the sending rate based on the delivery
  * rate (throughput) estimated from ACKs. In a nutshell:
  *
  *   On each ACK, update our model of the network path:
  *      bottleneck_bandwidth = windowed_max(delivered / elapsed, 10 round trips)
  *      min_rtt = windowed_min(rtt, 10 seconds)
- *   pacing_rate = pacing_gain * bottleneck_bandwidth * (1 - pacing_margin)
+ *   pacing_rate = pacing_gain * bottleneck_bandwidth
  *   cwnd = max(cwnd_gain * bottleneck_bandwidth * min_rtt, 4)
  *
- * BBRv3 improves coexistence with Reno/CUBIC, adds loss/ECN lower bounds,
- * caps PROBE_BW UP probing and exits STARTUP on excessive loss or ECN
- * marking, in addition to the bandwidth-plateau check.
+ * The core algorithm does not react directly to packet losses or delays,
+ * although BBR may adjust the size of next send per ACK when loss is
+ * observed, or adjust the sending rate if it estimates there is a
+ * traffic policer, in order to keep the drop rate reasonable.
  *
  * Here is a state transition diagram for BBR:
  *
@@ -74,8 +75,6 @@
 #define BBR_SCALE 8	/* scaling factor for fractions in BBR (e.g. gains) */
 #define BBR_UNIT (1 << BBR_SCALE)
 
-#define BBR_VERSION	3
-
 /* BBR has the following modes for deciding how fast to send: */
 enum bbr_mode {
 	BBR_STARTUP,	/* ramp up sending rate rapidly to fill pipe */
@@ -112,18 +111,12 @@ struct bbr {
 	u32	pacing_gain:10,	/* current gain for setting pacing rate */
 		cwnd_gain:10,	/* current gain for setting cwnd */
 		full_bw_reached:1,   /* reached full bw in Startup? */
-		full_bw_cnt:3,	/* number of rounds without large bw gains */
+		full_bw_cnt:2,	/* number of rounds without large bw gains */
 		cycle_idx:3,	/* current index in pacing_gain cycle array */
 		has_seen_rtt:1, /* have we seen an RTT sample yet? */
-		unused_b:4;
+		unused_b:5;
 	u32	prior_cwnd;	/* prior cwnd upon entering loss recovery */
 	u32	full_bw;	/* recent bw, to estimate if pipe is full */
-	u32	ecn_alpha:16,	/* BBRv3 ECN mark ratio EWMA (0-1024) */
-		loss_in_round:1, /* loss observed in current round? */
-		ecn_in_round:1,  /* ECN CE observed in current round? */
-		full_loss_cnt:3, /* rounds with high loss in STARTUP */
-		unused_c:11;
-	u32	loss_round_delivered; /* delivered count at round start */
 };
 
 #define CYCLE_LEN	8	/* number of phases in a pacing gain cycle */
@@ -149,10 +142,10 @@ static const int bbr_high_gain  = BBR_UNIT * 2885 / 1000 + 1;
 static const int bbr_drain_gain = BBR_UNIT * 1000 / 2885;
 /* The gain for deriving steady-state cwnd tolerates delayed/stretched ACKs: */
 static const int bbr_cwnd_gain  = BBR_UNIT * 2;
-/* BBRv3 PROBE_BW DOWN gain (0.91) is gentler than v1 (0.75) for fairness: */
+/* The pacing_gain values for the PROBE_BW gain cycle, to discover/share bw: */
 static const int bbr_pacing_gain[] = {
 	BBR_UNIT * 5 / 4,	/* probe for more available bw */
-	BBR_UNIT * 91 / 100,	/* drain queue and/or yield bw to other flows */
+	BBR_UNIT * 3 / 4,	/* drain queue and/or yield bw to other flows */
 	BBR_UNIT, BBR_UNIT, BBR_UNIT,	/* cruise at 1.0*bw to utilize pipe, */
 	BBR_UNIT, BBR_UNIT, BBR_UNIT	/* without creating excess queue... */
 };
@@ -170,14 +163,6 @@ static const u32 bbr_cwnd_min_target = 4;
 static const u32 bbr_full_bw_thresh = BBR_UNIT * 5 / 4;
 /* But after 3 rounds w/o significant bw growth, estimate pipe is full: */
 static const u32 bbr_full_bw_cnt = 3;
-
-/* BBRv3 STARTUP exit on excessive loss: 6 rounds with loss/ECN signal: */
-static const u32 bbr_full_loss_cnt = 6;
-/* BBRv3 ECN: alpha gain 1/16, exit STARTUP when CE ratio >= 50%: */
-static const u32 bbr_ecn_alpha_gain = BBR_UNIT / 16;
-static const u32 bbr_ecn_thresh = BBR_UNIT / 2;
-/* BBRv3 pacing margin: pace ~1% below estimated bw when pipe is full: */
-static const u32 bbr_pacing_margin_percent = 1;
 
 /* "long-term" ("LT") bandwidth estimator parameters... */
 /* The minimum number of rounds in an LT bw sampling interval: */
@@ -272,15 +257,7 @@ static void bbr_set_pacing_rate(struct sock *sk, u32 bw, int gain)
 
 	if (unlikely(!bbr->has_seen_rtt && tp->srtt_us))
 		bbr_init_pacing_rate_from_rtt(sk);
-	/* BBRv3: pace with a small margin below estimated bw once the pipe
-	 * is full, to sustain high utilization with a small standing queue.
-	 */
-	if (bbr_full_bw_reached(sk)) {
-		rate = (u64)rate * (100 - bbr_pacing_margin_percent) / 100;
-		sk->sk_pacing_rate = rate;
-		return;
-	}
-	if (rate > sk->sk_pacing_rate)
+	if (bbr_full_bw_reached(sk) || rate > sk->sk_pacing_rate)
 		sk->sk_pacing_rate = rate;
 }
 
@@ -330,19 +307,6 @@ static void bbr_cwnd_event(struct sock *sk, enum tcp_ca_event event)
 		 */
 		if (bbr->mode == BBR_PROBE_BW)
 			bbr_set_pacing_rate(sk, bbr_bw(sk), BBR_UNIT);
-		return;
-	}
-	/* BBRv3 ECN handling: track CE-marked ACKs with an EWMA and note
-	 * ECN signals seen in the current round for STARTUP exit decisions.
-	 */
-	if (event == CA_EVENT_ECN_IS_CE) {
-		bbr->ecn_alpha +=
-			((BBR_UNIT - bbr->ecn_alpha) * bbr_ecn_alpha_gain) >>
-			BBR_SCALE;
-		bbr->ecn_in_round = 1;
-	} else if (event == CA_EVENT_ECN_NO_CE) {
-		bbr->ecn_alpha -=
-			(bbr->ecn_alpha * bbr_ecn_alpha_gain) >> BBR_SCALE;
 	}
 }
 
@@ -709,13 +673,7 @@ static void bbr_update_bw(struct sock *sk, const struct rate_sample *rs)
 		bbr->rtt_cnt++;
 		bbr->round_start = 1;
 		bbr->packet_conservation = 0;
-		bbr->loss_in_round = 0;
-		bbr->ecn_in_round = 0;
-		bbr->loss_round_delivered = tp->delivered;
 	}
-
-	if (rs->losses)
-		bbr->loss_in_round = 1;
 
 	bbr_lt_bw_sampling(sk, rs);
 
@@ -745,9 +703,10 @@ static void bbr_update_bw(struct sock *sk, const struct rate_sample *rs)
 /* Estimate when the pipe is full, using the change in delivery rate: BBR
  * estimates that STARTUP filled the pipe if the estimated bw hasn't changed by
  * at least bbr_full_bw_thresh (25%) after bbr_full_bw_cnt (3) non-app-limited
- * rounds. BBRv3 additionally exits STARTUP after bbr_full_loss_cnt rounds
- * with persistent loss above bbr_loss_thresh, or when ECN marking exceeds
- * bbr_ecn_thresh, to avoid overshoot and improve coexistence.
+ * rounds. Why 3 rounds: 1: rwin autotuning grows the rwin, 2: we fill the
+ * higher rwin, 3: we get higher delivery rate samples. Or transient
+ * cross-traffic or radio noise can go away. CUBIC Hystart shares a similar
+ * design goal, but uses delay and inter-ACK spacing instead of bandwidth.
  */
 static void bbr_check_full_bw_reached(struct sock *sk,
 				      const struct rate_sample *rs)
@@ -757,19 +716,6 @@ static void bbr_check_full_bw_reached(struct sock *sk,
 
 	if (bbr_full_bw_reached(sk) || !bbr->round_start || rs->is_app_limited)
 		return;
-
-	/* BBRv3 loss/ECN-based STARTUP exit: persistent loss or heavy ECN
-	 * marking over several rounds means the pipe is full.
-	 */
-	if (bbr->loss_in_round || bbr->ecn_alpha >= bbr_ecn_thresh) {
-		if (++bbr->full_loss_cnt >= bbr_full_loss_cnt) {
-			bbr->full_bw_reached = 1;
-			bbr->full_bw = bbr_max_bw(sk);
-			return;
-		}
-	} else {
-		bbr->full_loss_cnt = 0;
-	}
 
 	bw_thresh = (u64)bbr->full_bw * bbr_full_bw_thresh >> BBR_SCALE;
 	if (bbr_max_bw(sk) >= bw_thresh) {
@@ -917,11 +863,6 @@ static void bbr_init(struct sock *sk)
 	bbr->full_bw_reached = 0;
 	bbr->full_bw = 0;
 	bbr->full_bw_cnt = 0;
-	bbr->ecn_alpha = BBR_UNIT;
-	bbr->loss_in_round = 0;
-	bbr->ecn_in_round = 0;
-	bbr->full_loss_cnt = 0;
-	bbr->loss_round_delivered = tp->delivered;
 	bbr->cycle_mstamp = 0;
 	bbr->cycle_idx = 0;
 	bbr_reset_lt_bw_sampling(sk);
@@ -945,7 +886,6 @@ static u32 bbr_undo_cwnd(struct sock *sk)
 
 	bbr->full_bw = 0;   /* spurious slow-down; reset full pipe detection */
 	bbr->full_bw_cnt = 0;
-	bbr->full_loss_cnt = 0;
 	bbr_reset_lt_bw_sampling(sk);
 	return tcp_sk(sk)->snd_cwnd;
 }
@@ -1027,4 +967,4 @@ MODULE_AUTHOR("Neal Cardwell <ncardwell@google.com>");
 MODULE_AUTHOR("Yuchung Cheng <ycheng@google.com>");
 MODULE_AUTHOR("Soheil Hassas Yeganeh <soheil@google.com>");
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION("TCP BBRv3 (Bottleneck Bandwidth and RTT v3)");
+MODULE_DESCRIPTION("TCP BBR (Bottleneck Bandwidth and RTT)");
