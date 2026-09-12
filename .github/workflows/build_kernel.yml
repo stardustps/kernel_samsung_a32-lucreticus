@@ -59,13 +59,16 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl unzip wget cpio python3 python2 git zip
+          sudo apt update
+          sudo apt install -y \
+            build-essential bc bison flex patch pkg-config git curl tar xz-utils zip unzip \
+            cpio rsync kmod perl python3 python-is-python3 libssl-dev libelf-dev pahole \
+            libncurses-dev zlib1g-dev libyaml-dev lz4 zstd device-tree-compiler adb fastboot
 
       - name: Download Toolchain (ZyC Clang 14)
         run: |
           mkdir -p $GITHUB_WORKSPACE/clang
-          wget -q https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20250704-release/Clang-14.0.6-20250704.tar.gz
+          curl -Ls https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20250704-release/Clang-14.0.6-20250704.tar.gz -o Clang-14.0.6-20250704.tar.gz
           tar -xf Clang-14.0.6-20250704.tar.gz -C $GITHUB_WORKSPACE/clang
           rm Clang-14.0.6-20250704.tar.gz
 
