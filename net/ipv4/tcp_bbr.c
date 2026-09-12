@@ -123,7 +123,6 @@ struct bbr {
 		ecn_in_round:1,  /* ECN CE observed in current round? */
 		full_loss_cnt:3, /* rounds with high loss in STARTUP */
 		unused_c:11;
-	u32	loss_round_delivered; /* delivered count at round start */
 };
 
 #define CYCLE_LEN	8	/* number of phases in a pacing gain cycle */
@@ -711,7 +710,6 @@ static void bbr_update_bw(struct sock *sk, const struct rate_sample *rs)
 		bbr->packet_conservation = 0;
 		bbr->loss_in_round = 0;
 		bbr->ecn_in_round = 0;
-		bbr->loss_round_delivered = tp->delivered;
 	}
 
 	if (rs->losses)
@@ -921,7 +919,6 @@ static void bbr_init(struct sock *sk)
 	bbr->loss_in_round = 0;
 	bbr->ecn_in_round = 0;
 	bbr->full_loss_cnt = 0;
-	bbr->loss_round_delivered = tp->delivered;
 	bbr->cycle_mstamp = 0;
 	bbr->cycle_idx = 0;
 	bbr_reset_lt_bw_sampling(sk);
