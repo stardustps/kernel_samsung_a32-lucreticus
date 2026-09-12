@@ -63,6 +63,16 @@ on:
         required: true
         default: false
         type: boolean
+      nosec:
+        description: 'Strip Samsung security layer? [EXPERIMENT]'
+        required: true
+        default: false
+        type: boolean
+      nodebug:
+        description: 'Strip DEBUG configs? [EXPERIMENT]'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -212,6 +222,21 @@ jobs:
               --enable CONFIG_DST_CACHE \
               --enable CONFIG_CRYPTO_ALGAPI
           fi
+          if [ "${{ inputs.nosec }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_TZDEV \
+              --disable CONFIG_TEEGRIS_TEE_SUPPORT
+          fi
+          if [ "${{ inputs.nodebug }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_DYNAMIC_DEBUG \
+              --disable CONFIG_DEBUG_INFO \
+              --disable CONFIG_SCHED_DEBUG \
+              --disable CONFIG_DEBUG_LIST \
+              --disable CONFIG_FTRACE \
+              --disable CONFIG_MAGIC_SYSRQ \
+              --disable CONFIG_KALLSYMS_ALL
+          fi
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
           echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
@@ -252,6 +277,12 @@ jobs:
           fi
           if [ "${{ inputs.wireguard }}" = "true" ]; then
             SUFFIX="$SUFFIX-wg"
+          fi
+          if [ "${{ inputs.nosec }}" = "true" ]; then
+            SUFFIX="$SUFFIX-nosec"
+          fi
+          if [ "${{ inputs.nodebug }}" = "true" ]; then
+            SUFFIX="$SUFFIX-nodebug"
           fi
           if [ "${{ inputs.lto }}" = "thin" ]; then
             SUFFIX="$SUFFIX-thinlto"
@@ -295,10 +326,20 @@ jobs:
           else
             WG_STATUS="no"
           fi
+          if [ "${{ inputs.nosec }}" = "true" ]; then
+            SEC_STATUS="stripped"
+          else
+            SEC_STATUS="kept"
+          fi
+          if [ "${{ inputs.nodebug }}" = "true" ]; then
+            DBG_STATUS="stripped"
+          else
+            DBG_STATUS="full"
+          fi
           echo "MD5=$MD5" >> $GITHUB_ENV
           echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\naio optimized: %s\nwireguard: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$AIO_STATUS" "$WG_STATUS" "$MD5" "${{ github.sha }}")
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$MD5" "${{ github.sha }}")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$ZIP" \
