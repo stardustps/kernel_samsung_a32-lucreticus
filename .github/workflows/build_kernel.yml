@@ -58,6 +58,11 @@ on:
         required: true
         default: true
         type: boolean
+      wireguard:
+        description: 'Add in-kernel WireGuard support?'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -115,6 +120,14 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh" | bash
           echo "CONFIG_KSU=y" > $GITHUB_WORKSPACE/arch/arm64/configs/ksu.config
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> $GITHUB_WORKSPACE/arch/arm64/configs/ksu.config
+
+      - name: Setup WireGuard
+        if: ${{ inputs.wireguard }}
+        run: |
+          curl -Ls https://git.zx2c4.com/wireguard-linux-compat/snapshot/wireguard-linux-compat-1.0.20220627.tar.xz -o wg-compat.tar.xz
+          tar -xf wg-compat.tar.xz
+          ./wireguard-linux-compat-1.0.20220627/kernel-tree-scripts/jury-rig.sh $(pwd)
+          rm wg-compat.tar.xz
 
       - name: Compile Kernel
         run: |
@@ -192,6 +205,13 @@ jobs:
             scripts/config --file $CFGDIR/compiled_defconfig \
               --disable CONFIG_AIO_OPTIMIZE
           fi
+          if [ "${{ inputs.wireguard }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_WIREGUARD \
+              --enable CONFIG_NET_UDP_TUNNEL \
+              --enable CONFIG_DST_CACHE \
+              --enable CONFIG_CRYPTO_ALGAPI
+          fi
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
           echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
@@ -230,6 +250,9 @@ jobs:
           if [ "${{ inputs.aio_opt }}" != "true" ]; then
             SUFFIX="$SUFFIX-noaioopt"
           fi
+          if [ "${{ inputs.wireguard }}" = "true" ]; then
+            SUFFIX="$SUFFIX-wg"
+          fi
           if [ "${{ inputs.lto }}" = "thin" ]; then
             SUFFIX="$SUFFIX-thinlto"
           elif [ "${{ inputs.lto }}" = "full" ]; then
@@ -267,10 +290,15 @@ jobs:
           else
             AIO_STATUS="no"
           fi
+          if [ "${{ inputs.wireguard }}" = "true" ]; then
+            WG_STATUS="yes"
+          else
+            WG_STATUS="no"
+          fi
           echo "MD5=$MD5" >> $GITHUB_ENV
           echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\naio optimized: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$AIO_STATUS" "$MD5" "${{ github.sha }}")
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\naio optimized: %s\nwireguard: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$AIO_STATUS" "$WG_STATUS" "$MD5" "${{ github.sha }}")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$ZIP" \
