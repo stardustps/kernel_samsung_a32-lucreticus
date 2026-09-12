@@ -33,6 +33,15 @@ config IOSCHED_CFQ
 
 	  This is the default I/O scheduler.
 
+config IOSCHED_ZEN
+	tristate "Zen I/O scheduler"
+	default n
+	---help---
+	  The Zen I/O scheduler is a FCFS scheduler with deadlines to
+	  ensure fairness, based on noop, deadline and SIO. Dispatches
+	  are back-inserted. Suitable for devices with no seek penalty
+	  such as flash storage.
+
 config CFQ_GROUP_IOSCHED
 	bool "CFQ Group Scheduling support"
 	depends on IOSCHED_CFQ && BLK_CGROUP
@@ -54,6 +63,9 @@ choice
 	config DEFAULT_CFQ
 		bool "CFQ" if IOSCHED_CFQ=y
 
+	config DEFAULT_ZEN
+		bool "Zen" if IOSCHED_ZEN=y
+
 	config DEFAULT_NOOP
 		bool "No-op"
 
@@ -63,6 +75,7 @@ config DEFAULT_IOSCHED
 	string
 	default "deadline" if DEFAULT_DEADLINE
 	default "cfq" if DEFAULT_CFQ
+	default "zen" if DEFAULT_ZEN
 	default "noop" if DEFAULT_NOOP
 
 config MQ_IOSCHED_DEADLINE
