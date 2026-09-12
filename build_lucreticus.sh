@@ -28,7 +28,7 @@ rm -rf $CFGDIR/compiled_defconfig
 make -C $(pwd) O=$(pwd)/out clean -j$(nproc) && make -C $(pwd) O=$(pwd)/out mrproper -j$(nproc)
 clear
  
-read -p "`echo -e 'thanks for building slmkernel \ntell what device you wanna build for 💩💩 \nsupported devices: a32, a22, f22, m22(experimental), m32(experimental)  '`" choice
+read -p "`echo -e 'thanks for building lucreticus \ntell what device you wanna build for 💩💩 \nsupported devices: a32, a22, f22, m22(experimental), m32(experimental)  '`" choice
 case "$choice" in 
   a32|A32 ) export DEVICE="a32";;
   a22|A22 ) export DEVICE="a22";;
@@ -40,8 +40,8 @@ esac
 
 #edit perf.config to battery.config to disable perf tweaks, dont use them at the same time!
 #add $CFGDIR/ksu.config at the end before ">" for ksu integration(optional)
-#example: build m22 battery life oriented karnal with ksu: $CFGDIR/mt6768_slm_defconfig $CFGDIR/"$DEVICE".config $CFGDIR/battery.config $CFGDIR/ksu.config
-cat $CFGDIR/mt6768_slm_defconfig $CFGDIR/"$DEVICE".config $CFGDIR/battery.config > $CFGDIR/compiled_defconfig
+#example: build m22 battery life oriented karnal with ksu: $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/"$DEVICE".config $CFGDIR/battery.config $CFGDIR/ksu.config
+cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/"$DEVICE".config $CFGDIR/battery.config > $CFGDIR/compiled_defconfig
 
 #selinux and gpu driver control
 #buildable: mali bifrost r25p0, mali valhall r32p1, mali avalon r49p1[WIP]
@@ -58,7 +58,7 @@ make -s -C $(pwd) O=$(pwd)/out -j$(nproc)
 IMAGECHECK="$(pwd)/out/arch/arm64/boot/Image"
 
 if [ -f "$IMAGECHECK" ]; then
-    echo "built slm for device: $DEVICE"
+    echo "built lucreticus for device: $DEVICE"
     GPU_VER=$(sed -n 's/^CONFIG_MTK_GPU_VERSION="\([^"]*\)"/\1/p' \
         "$(pwd)/out/.config")
 

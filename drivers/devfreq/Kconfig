@@ -176,8 +176,8 @@ config DEVFREQ_CPU_LLCC_DDR_BW_BOOST_FREQ
 	help
 	  Boost frequency for the MSM DDR bus.
 
-config SLM_OC_RAMDVFS
-	bool "slmkarnal ddr dvfs tweaks"
+config LUCRETICUS_OC_RAMDVFS
+	bool "lucreticus ddr dvfs tweaks"
 	default n
 	---help---
 	  experimental tweaks to improve average ddr latency ig
