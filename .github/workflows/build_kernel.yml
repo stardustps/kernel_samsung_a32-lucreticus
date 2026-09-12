@@ -1,0 +1,122 @@
+name: Build Lucreticus Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: 'Device to build for (a32)'
+        default: 'a32'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Kernel ${{ matrix.ksu && 'with KernelSU' || 'standard' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ksu: [false, true]
+
+    env:
+      DEVICE_CHOICE: ${{ github.event.inputs.device || 'a32' }}
+      KSU_CHOICE: ${{ matrix.ksu }}
+
+    steps:
+      - name: Checkout Kernel Source
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev libfl-dev curl unzip wget cpio python3 python2 git zip
+
+      - name: Download Toolchain (ZyC Clang 14)
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/clang
+          wget -q https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20250704-release/Clang-14.0.6-20250704.tar.gz
+          tar -xf Clang-14.0.6-20250704.tar.gz -C $GITHUB_WORKSPACE/clang
+          rm Clang-14.0.6-20250704.tar.gz
+
+      - name: Setup KernelSU
+        if: ${{ matrix.ksu }}
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/backslashxx/KernelSU/master/kernel/setup.sh" | bash
+          echo "CONFIG_KSU=y" > $GITHUB_WORKSPACE/arch/arm64/configs/ksu.config
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> $GITHUB_WORKSPACE/arch/arm64/configs/ksu.config
+
+      - name: Compile Kernel
+        run: |
+          rm -rf out
+          make clean 2>/dev/null || true
+          make mrproper 2>/dev/null || true
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+          export TC=$GITHUB_WORKSPACE/clang
+          export CROSS_COMPILE=$TC/bin/aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=$TC/bin/arm-linux-gnueabi-
+          export LD=$TC/bin/ld.lld
+          export CC=$TC/bin/clang
+          export ARCH=arm64
+          export KCFLAGS=' -w -pipe -O3'
+          export KCPPFLAGS=' -O3'
+          export CONFIG_SECTION_MISMATCH_WARN_ONLY=y
+          export CFGDIR=arch/arm64/configs
+          rm -f $CFGDIR/compiled_defconfig
+          if [ "${{ matrix.ksu }}" = "true" ]; then
+            cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/${{ env.DEVICE_CHOICE }}.config $CFGDIR/battery.config $CFGDIR/ksu.config > $CFGDIR/compiled_defconfig
+          else
+            cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/${{ env.DEVICE_CHOICE }}.config $CFGDIR/battery.config > $CFGDIR/compiled_defconfig
+          fi
+          echo '' >> $CFGDIR/compiled_defconfig
+          echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
+          echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
+          echo 'CONFIG_MTK_GPU_VERSION="mali valhall r32p1"' >> $CFGDIR/compiled_defconfig
+          make -C $(pwd) O=$(pwd)/out -j$(nproc) compiled_defconfig
+          make -s -C $(pwd) O=$(pwd)/out -j$(nproc)
+
+      - name: Prepare AnyKernel3
+        run: |
+          git clone https://github.com/tuongnguyn/sta7dust.git sta7dust
+          if [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz sta7dust/
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            gzip -9 -c out/arch/arm64/boot/Image > sta7dust/Image.gz
+          else
+            echo "Kernel Image not found!"
+            exit 1
+          fi
+
+      - name: Create Flashable Zip
+        run: |
+          cd sta7dust
+          if [ "${{ matrix.ksu }}" = "true" ]; then
+            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-ksu-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
+          else
+            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
+          fi
+          ls -lh ../lucreticus-lrc1-*.zip
+
+      - name: Send Telegram Notification
+        run: |
+          ZIP=$(ls lucreticus-lrc1-*.zip | head -n 1)
+          MD5=$(md5sum "$ZIP" | cut -d ' ' -f 1)
+          if [ "${{ matrix.ksu }}" = "true" ]; then
+            KSU_STATUS="yes"
+          else
+            KSU_STATUS="no"
+          fi
+          echo "MD5=$MD5" >> $GITHUB_ENV
+          echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
+          echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14\nkernelsu integrated: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "$KSU_STATUS" "$MD5" "${{ github.sha }}")
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -F document=@"$ZIP" \
+            -F parse_mode=HTML \
+            -F caption="$CAPTION"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.ksu && 'ksu' || 'standard' }}
+          path: lucreticus-lrc1-*.zip
