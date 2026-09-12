@@ -150,6 +150,10 @@ struct kioctx {
 		unsigned	tail;
 		unsigned	completed_events;
 		spinlock_t	completion_lock;
+#ifdef CONFIG_AIO_OPTIMIZE
+		unsigned	wait_min_nr;
+		unsigned	last_wakeup_completed;
+#endif
 	} ____cacheline_aligned_in_smp;
 
 	struct page		*internal_pages[AIO_RING_PAGES];
@@ -782,6 +786,10 @@ static struct kioctx *ioctx_alloc(unsigned nr_events)
 	 * the ring_lock mutex held until setup is complete. */
 	mutex_lock(&ctx->ring_lock);
 	init_waitqueue_head(&ctx->wait);
+#ifdef CONFIG_AIO_OPTIMIZE
+	ctx->wait_min_nr = ~0U;
+	ctx->last_wakeup_completed = 0;
+#endif
 
 	INIT_LIST_HEAD(&ctx->active_reqs);
 
@@ -1182,13 +1190,22 @@ static void aio_complete(struct kiocb *kiocb, long res, long res2)
 	/* after flagging the request as done, we
 	 * must never even look at it again
 	 */
+#ifdef CONFIG_AIO_OPTIMIZE
+	smp_store_release(&ctx->tail, tail); /* event visible before tail */
+#else
 	smp_wmb();	/* make event visible before updating tail */
 
 	ctx->tail = tail;
+#endif
 
 	ring = kmap_atomic(ctx->ring_pages[0]);
 	head = ring->head;
+#ifdef CONFIG_AIO_OPTIMIZE
+	/* release publishes the event before the tail update */
+	smp_store_release(&ring->tail, tail);
+#else
 	ring->tail = tail;
+#endif
 	kunmap_atomic(ring);
 	flush_dcache_page(ctx->ring_pages[0]);
 
@@ -1218,8 +1235,18 @@ static void aio_complete(struct kiocb *kiocb, long res, long res2)
 	 */
 	smp_mb();
 
+#ifdef CONFIG_AIO_OPTIMIZE
+	/* skip the wakeup when no waiter can make progress on it */
+	if (waitqueue_active(&ctx->wait) &&
+	    ctx->completed_events - READ_ONCE(ctx->last_wakeup_completed) >=
+	    READ_ONCE(ctx->wait_min_nr)) {
+		WRITE_ONCE(ctx->last_wakeup_completed, ctx->completed_events);
+		wake_up(&ctx->wait);
+	}
+#else
 	if (waitqueue_active(&ctx->wait))
 		wake_up(&ctx->wait);
+#endif
 
 	percpu_ref_put(&ctx->reqs);
 }
@@ -1248,14 +1275,21 @@ static long aio_read_events_ring(struct kioctx *ctx,
 	/* Access to ->ring_pages here is protected by ctx->ring_lock. */
 	ring = kmap_atomic(ctx->ring_pages[0]);
 	head = ring->head;
+#ifdef CONFIG_AIO_OPTIMIZE
+	/* acquire pairs with the release store in aio_complete() */
+	tail = smp_load_acquire(&ring->tail);
+#else
 	tail = ring->tail;
+#endif
 	kunmap_atomic(ring);
 
+#ifndef CONFIG_AIO_OPTIMIZE
 	/*
 	 * Ensure that once we've read the current tail pointer, that
 	 * we also see the events that were stored up to the tail.
 	 */
 	smp_rmb();
+#endif
 
 	pr_debug("h%u t%u m%u\n", head, tail, ctx->nr_events);
 
@@ -1358,10 +1392,21 @@ static long read_events(struct kioctx *ctx, long min_nr, long nr,
 	 */
 	if (until == 0)
 		aio_read_events(ctx, min_nr, nr, event, &ret);
-	else
+	else {
+#ifdef CONFIG_AIO_OPTIMIZE
+		/*
+		 * Publish the smallest event count any waiter needs so
+		 * completion can skip wakeups that make no progress.
+		 * Only ever lowered: a stale small value merely causes
+		 * extra wakeups, never a lost one.
+		 */
+		if ((unsigned long)min_nr < READ_ONCE(ctx->wait_min_nr))
+			WRITE_ONCE(ctx->wait_min_nr, (unsigned int)min_nr);
+#endif
 		wait_event_interruptible_hrtimeout(ctx->wait,
 				aio_read_events(ctx, min_nr, nr, event, &ret),
 				until);
+	}
 
 	if (!ret && signal_pending(current))
 		ret = -EINTR;

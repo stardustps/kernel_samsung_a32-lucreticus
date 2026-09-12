@@ -1535,6 +1535,15 @@ config AIO
 	  by some high performance threaded applications. Disabling
 	  this option saves about 7k.
 
+config AIO_OPTIMIZE
+	bool "AIO completion fast-path optimizations"
+	depends on AIO
+	default y
+	help
+	  Skip completion wakeups that cannot satisfy any waiter's
+	  minimum event count and use acquire/release barriers for
+	  the shared completion ring tail instead of full barriers.
+
 config ADVISE_SYSCALLS
 	bool "Enable madvise/fadvise syscalls" if EXPERT
 	default y
