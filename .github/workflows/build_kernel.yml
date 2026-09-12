@@ -11,18 +11,47 @@ on:
         required: true
         default: false
         type: boolean
+      profile:
+        description: 'Tuning profile (perf, balance, battery, or all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - perf
+          - balance
+          - battery
+          - all
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build Kernel ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
+  setup:
+    name: Resolve profiles
     runs-on: ubuntu-latest
+    outputs:
+      profiles: ${{ steps.set.outputs.profiles }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ inputs.profile }}" = "all" ]; then
+            echo 'profiles=["perf", "balance", "battery"]' >> $GITHUB_OUTPUT
+          else
+            echo "profiles=[\"${{ inputs.profile }}\"]" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build Kernel ${{ matrix.profile }} ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        profile: ${{ fromJSON(needs.setup.outputs.profiles) }}
 
     env:
       DEVICE_CHOICE: ${{ github.event.inputs.device || 'a32' }}
       KSU_CHOICE: ${{ inputs.ksu }}
+      PROFILE_CHOICE: ${{ matrix.profile }}
 
     steps:
       - name: Checkout Kernel Source
@@ -64,10 +93,12 @@ jobs:
           export CONFIG_SECTION_MISMATCH_WARN_ONLY=y
           export CFGDIR=arch/arm64/configs
           rm -f $CFGDIR/compiled_defconfig
+          cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/${{ env.DEVICE_CHOICE }}.config > $CFGDIR/compiled_defconfig
+          if [ "${{ matrix.profile }}" != "balance" ]; then
+            cat $CFGDIR/${{ matrix.profile }}.config >> $CFGDIR/compiled_defconfig
+          fi
           if [ "${{ inputs.ksu }}" = "true" ]; then
-            cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/${{ env.DEVICE_CHOICE }}.config $CFGDIR/battery.config $CFGDIR/ksu.config > $CFGDIR/compiled_defconfig
-          else
-            cat $CFGDIR/mt6768_lucreticus_defconfig $CFGDIR/${{ env.DEVICE_CHOICE }}.config $CFGDIR/battery.config > $CFGDIR/compiled_defconfig
+            cat $CFGDIR/ksu.config >> $CFGDIR/compiled_defconfig
           fi
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
@@ -92,9 +123,9 @@ jobs:
         run: |
           cd sta7dust
           if [ "${{ inputs.ksu }}" = "true" ]; then
-            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-ksu-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
+            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-ksu-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
           else
-            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
+            zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
           fi
           ls -lh ../lucreticus-lrc1-*.zip
 
@@ -110,7 +141,7 @@ jobs:
           echo "MD5=$MD5" >> $GITHUB_ENV
           echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
           echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14\nkernelsu integrated: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "$KSU_STATUS" "$MD5" "${{ github.sha }}")
+          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14\nkernelsu integrated: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$KSU_STATUS" "$MD5" "${{ github.sha }}")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
             -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
             -F document=@"$ZIP" \
@@ -120,5 +151,5 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ inputs.ksu && 'ksu' || 'standard' }}
+          name: lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-${{ inputs.ksu && 'ksu' || 'standard' }}
           path: lucreticus-lrc1-*.zip
