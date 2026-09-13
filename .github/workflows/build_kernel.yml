@@ -82,6 +82,11 @@ on:
         required: true
         default: false
         type: boolean
+      use_cache:
+        description: 'Reuse last out/ cache? [EXPERIMENT]'
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -140,6 +145,15 @@ jobs:
           tar -xf Clang-14.0.6-20250704.tar.gz -C $GITHUB_WORKSPACE/clang
           rm Clang-14.0.6-20250704.tar.gz
 
+      - name: Restore out cache
+        if: ${{ inputs.use_cache }}
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: out-${{ matrix.device }}-${{ matrix.profile }}-${{ inputs.opt }}-${{ inputs.ksu }}-${{ inputs.lto }}-${{ inputs.zen }}-${{ inputs.aio_opt }}-${{ inputs.wireguard }}-${{ inputs.nosec }}-${{ inputs.nodebug }}-${{ hashFiles('arch/arm64/configs/**', 'drivers/**', 'kernel/**', 'fs/**', 'block/**', 'crypto/**', 'net/**') }}
+          restore-keys: |
+            out-${{ matrix.device }}-${{ matrix.profile }}-
+
       - name: Setup KernelSU
         if: ${{ inputs.ksu }}
         run: |
@@ -159,9 +173,13 @@ jobs:
 
       - name: Compile Kernel
         run: |
-          rm -rf out
-          make clean 2>/dev/null || true
-          make mrproper 2>/dev/null || true
+          if [ "${{ inputs.use_cache }}" != "true" ]; then
+            rm -rf out
+            make clean 2>/dev/null || true
+            make mrproper 2>/dev/null || true
+          else
+            echo "use_cache: keeping previous out/ for incremental build"
+          fi
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           export TC=$GITHUB_WORKSPACE/clang
           export CROSS_COMPILE=$TC/bin/aarch64-linux-gnu-
@@ -293,6 +311,9 @@ jobs:
           if [ "${{ inputs.aio_opt }}" != "true" ]; then
             SUFFIX="$SUFFIX-noaioopt"
           fi
+          if [ "${{ inputs.use_cache }}" = "true" ]; then
+            SUFFIX="$SUFFIX-cache"
+          fi
           if [ "${{ inputs.wireguard }}" = "true" ]; then
             SUFFIX="$SUFFIX-wg"
           fi
@@ -344,6 +365,7 @@ jobs:
           if [ "${{ inputs.wireguard }}" = "true" ]; then WG_STATUS="yes"; else WG_STATUS="no"; fi
           if [ "${{ inputs.nosec }}" = "true" ]; then SEC_STATUS="stripped"; else SEC_STATUS="kept"; fi
           if [ "${{ inputs.nodebug }}" = "true" ]; then DBG_STATUS="stripped"; else DBG_STATUS="full"; fi
+          if [ "${{ inputs.use_cache }}" = "true" ]; then CACHE_STATUS="yes"; else CACHE_STATUS="no"; fi
           LIST=""
           COUNT=0
           for ZIP in lucreticus-lrc1-*.zip; do
@@ -356,7 +378,7 @@ jobs:
             LIST=$(printf '%s\n- %s %s — md5: %s' "$LIST" "$DEV" "$PROF" "$MD5")
             echo "$ZIP $MD5" >> files.txt
           done
-          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "${{ github.sha }}" "$LIST")
+          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncache: %s\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$CACHE_STATUS" "${{ github.sha }}" "$LIST")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             --data-urlencode "parse_mode=HTML" \
