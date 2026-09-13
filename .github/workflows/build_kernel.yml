@@ -134,10 +134,8 @@ jobs:
       - name: Setup WireGuard
         if: ${{ inputs.wireguard }}
         run: |
-          curl -Ls https://git.zx2c4.com/wireguard-linux-compat/snapshot/wireguard-linux-compat-1.0.20220627.tar.xz -o wg-compat.tar.xz
-          tar -xf wg-compat.tar.xz
-          ./wireguard-linux-compat-1.0.20220627/kernel-tree-scripts/jury-rig.sh $(pwd)
-          rm wg-compat.tar.xz
+          git clone --depth 1 https://github.com/WireGuard/wireguard-linux-compat.git
+          ./wireguard-linux-compat/kernel-tree-scripts/jury-rig.sh $(pwd)
 
       - name: Compile Kernel
         run: |
