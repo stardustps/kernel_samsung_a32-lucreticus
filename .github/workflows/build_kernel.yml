@@ -87,6 +87,30 @@ on:
         required: true
         default: false
         type: boolean
+      bypass_charging:
+        description: 'Enable bypass charging? [EXPERIMENT]'
+        required: true
+        default: false
+        type: boolean
+      clock:
+        description: 'CPU clock mode [EXPERIMENT]'
+        required: true
+        default: 'stock'
+        type: choice
+        options:
+          - stock
+          - overclock
+          - downclock
+      hz:
+        description: 'Tick rate (HZ) [EXPERIMENT]'
+        required: true
+        default: '250'
+        type: choice
+        options:
+          - '100'
+          - '250'
+          - '300'
+          - '1000'
 
 permissions:
   contents: write
@@ -273,6 +297,38 @@ jobs:
               --disable CONFIG_MAGIC_SYSRQ \
               --disable CONFIG_KALLSYMS_ALL
           fi
+          if [ "${{ inputs.bypass_charging }}" = "true" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_MTK_BYPASS_CHARGING
+          else
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_MTK_BYPASS_CHARGING
+          fi
+          if [ "${{ inputs.clock }}" = "overclock" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_LUCRETICUS_OC_GPU \
+              --enable CONFIG_LUCRETICUS_OC_CCI \
+              --enable CONFIG_LUCRETICUS_OC_RAMDVFS \
+              --disable CONFIG_LUCRETICUS_UV
+          elif [ "${{ inputs.clock }}" = "downclock" ]; then
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --enable CONFIG_LUCRETICUS_UV \
+              --disable CONFIG_LUCRETICUS_OC_GPU \
+              --disable CONFIG_LUCRETICUS_OC_CCI \
+              --disable CONFIG_LUCRETICUS_OC_RAMDVFS
+          else
+            scripts/config --file $CFGDIR/compiled_defconfig \
+              --disable CONFIG_LUCRETICUS_OC_GPU \
+              --disable CONFIG_LUCRETICUS_OC_CCI \
+              --disable CONFIG_LUCRETICUS_OC_RAMDVFS \
+              --disable CONFIG_LUCRETICUS_UV
+          fi
+          case "${{ inputs.hz }}" in
+            100) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_100 --disable CONFIG_HZ_250 --disable CONFIG_HZ_300 --disable CONFIG_HZ_1000 --set-val CONFIG_HZ 100 ;;
+            250) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_250 --disable CONFIG_HZ_100 --disable CONFIG_HZ_300 --disable CONFIG_HZ_1000 --set-val CONFIG_HZ 250 ;;
+            300) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_300 --disable CONFIG_HZ_100 --disable CONFIG_HZ_250 --disable CONFIG_HZ_1000 --set-val CONFIG_HZ 300 ;;
+            1000) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_1000 --disable CONFIG_HZ_100 --disable CONFIG_HZ_250 --disable CONFIG_HZ_300 --set-val CONFIG_HZ 1000 ;;
+          esac
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
           echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
@@ -314,6 +370,15 @@ jobs:
           if [ "${{ inputs.use_cache }}" = "true" ]; then
             SUFFIX="$SUFFIX-cache"
           fi
+          if [ "${{ inputs.bypass_charging }}" = "true" ]; then
+            SUFFIX="$SUFFIX-bypass"
+          fi
+          if [ "${{ inputs.clock }}" = "overclock" ]; then
+            SUFFIX="$SUFFIX-oc"
+          elif [ "${{ inputs.clock }}" = "downclock" ]; then
+            SUFFIX="$SUFFIX-uv"
+          fi
+          SUFFIX="$SUFFIX-${{ inputs.hz }}hz"
           if [ "${{ inputs.wireguard }}" = "true" ]; then
             SUFFIX="$SUFFIX-wg"
           fi
@@ -366,6 +431,9 @@ jobs:
           if [ "${{ inputs.nosec }}" = "true" ]; then SEC_STATUS="stripped"; else SEC_STATUS="kept"; fi
           if [ "${{ inputs.nodebug }}" = "true" ]; then DBG_STATUS="stripped"; else DBG_STATUS="full"; fi
           if [ "${{ inputs.use_cache }}" = "true" ]; then CACHE_STATUS="yes"; else CACHE_STATUS="no"; fi
+          if [ "${{ inputs.bypass_charging }}" = "true" ]; then BYPASS_STATUS="yes"; else BYPASS_STATUS="no"; fi
+          CLOCK_STATUS="${{ inputs.clock }}"
+          HZ_STATUS="${{ inputs.hz }}"
           LIST=""
           COUNT=0
           for ZIP in lucreticus-lrc1-*.zip; do
@@ -378,7 +446,7 @@ jobs:
             LIST=$(printf '%s\n- %s %s — md5: %s' "$LIST" "$DEV" "$PROF" "$MD5")
             echo "$ZIP $MD5" >> files.txt
           done
-          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncache: %s\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$CACHE_STATUS" "${{ github.sha }}" "$LIST")
+          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncache: %s\nbypass charging: %s\nclock: %s\ntick: %sHz\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$CACHE_STATUS" "$BYPASS_STATUS" "$CLOCK_STATUS" "$HZ_STATUS" "${{ github.sha }}" "$LIST")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             --data-urlencode "parse_mode=HTML" \
