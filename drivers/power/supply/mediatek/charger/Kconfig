@@ -210,3 +210,14 @@ config AFC_CHARGER
 	help
 	  If you say yes here you will get support for
 	  the AFC charger driver.
+
+config MTK_BYPASS_CHARGING
+	bool "MediaTek bypass charging support"
+	depends on MEDIATEK_SOLUTION
+	default n
+	help
+	  Bypass battery charging and power the system directly from
+	  the charger. Useful for gaming or docked use to reduce
+	  battery wear and heat. When enabled, charging can be
+	  bypassed via sysfs at /sys/class/power_supply/battery/bypass_charging
+	  or via module param bypass_charging.

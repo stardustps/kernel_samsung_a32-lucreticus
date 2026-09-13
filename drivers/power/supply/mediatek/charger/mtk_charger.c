@@ -99,6 +99,34 @@ static struct charger_manager *pinfo;
 static struct list_head consumer_head = LIST_HEAD_INIT(consumer_head);
 static DEFINE_MUTEX(consumer_mutex);
 
+#ifdef CONFIG_MTK_BYPASS_CHARGING
+static bool mtk_bypass_charging_enabled;
+module_param_named(bypass_charging, mtk_bypass_charging_enabled, bool, 0644);
+MODULE_PARM_DESC(bypass_charging, "Bypass battery charging, power system directly from charger");
+
+static ssize_t bypass_charging_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", mtk_bypass_charging_enabled);
+}
+
+static ssize_t bypass_charging_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul(buf, 10, &val);
+	if (ret)
+		return ret;
+	mtk_bypass_charging_enabled = !!val;
+	pr_info("bypass_charging set to %d\n", mtk_bypass_charging_enabled);
+	return count;
+}
+static DEVICE_ATTR_RW(bypass_charging);
+#endif
+
 
 bool mtk_is_TA_support_pd_pps(struct charger_manager *pinfo)
 {
@@ -258,6 +286,12 @@ static int _mtk_charger_change_current_setting(struct charger_manager *info)
 
 static int _mtk_charger_do_charging(struct charger_manager *info, bool en)
 {
+#ifdef CONFIG_MTK_BYPASS_CHARGING
+	if (mtk_bypass_charging_enabled && en) {
+		pr_info("bypass_charging active, suppress charging enable\n");
+		en = false;
+	}
+#endif
 	if (info != NULL && info->do_charging)
 		info->do_charging(info, en);
 	return 0;
@@ -4131,6 +4165,9 @@ static int mtk_charger_probe(struct platform_device *pdev)
 	mutex_unlock(&consumer_mutex);
 
 	/* sysfs node */
+#ifdef CONFIG_MTK_BYPASS_CHARGING
+	device_create_file(&(pdev->dev), &dev_attr_bypass_charging);
+#endif
 	ret_device_file = device_create_file(&(pdev->dev),
 		&dev_attr_enable_sc);
 	ret_device_file = device_create_file(&(pdev->dev),

@@ -54,3 +54,5 @@ ifneq ($(CONFIG_MTK_GAUGE_VERSION),10)
 obj-y += misc/
 endif
 
+obj-$(CONFIG_MTK_BYPASS_CHARGING) += mtk_bypass_charging.o
+
