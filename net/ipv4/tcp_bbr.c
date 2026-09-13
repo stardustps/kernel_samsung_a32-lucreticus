@@ -924,8 +924,7 @@ static void bbr_update_min_rtt(struct sock *sk, const struct rate_sample *rs)
 	filter_expired = after(tcp_jiffies32,
 			       bbr->min_rtt_stamp + bbr_min_rtt_win_sec * HZ);
 	if (rs->rtt_us >= 0 &&
-	    (rs->rtt_us < bbr->min_rtt_us ||
-	     (filter_expired && !rs->is_ack_delayed))) {
+	    (rs->rtt_us < bbr->min_rtt_us || filter_expired)) {
 		bbr->min_rtt_us = rs->rtt_us;
 		bbr->min_rtt_stamp = tcp_jiffies32;
 	}
@@ -1126,7 +1125,7 @@ static struct tcp_congestion_ops tcp_bbr_cong_ops __read_mostly = {
 	.undo_cwnd	= bbr_undo_cwnd,
 	.cwnd_event	= bbr_cwnd_event,
 	.ssthresh	= bbr_ssthresh,
-	.tso_segs	= bbr_tso_segs,
+	.min_tso_segs	= bbr_min_tso_segs,
 	.get_info	= bbr_get_info,
 	.set_state	= bbr_set_state,
 };
