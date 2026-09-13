@@ -310,62 +310,57 @@ jobs:
           zip -r9 ../lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-$SUFFIX-${{ env.SHORT_SHA }}.zip * -x .git README.md *placeholder
           ls -lh ../lucreticus-lrc1-*.zip
 
-      - name: Send Telegram Notification
-        run: |
-          ZIP=$(ls lucreticus-lrc1-*.zip | head -n 1)
-          MD5=$(md5sum "$ZIP" | cut -d ' ' -f 1)
-          if [ "${{ inputs.ksu }}" = "true" ]; then
-            KSU_STATUS="yes"
-          else
-            KSU_STATUS="no"
-          fi
-          if [ "${{ inputs.droidspaces }}" = "true" ]; then
-            DS_STATUS="yes"
-          else
-            DS_STATUS="no"
-          fi
-          if [ "${{ inputs.nomount }}" = "true" ]; then
-            NM_STATUS="yes"
-          else
-            NM_STATUS="no"
-          fi
-          if [ "${{ inputs.zen }}" = "true" ]; then
-            ZEN_STATUS="zen"
-          else
-            ZEN_STATUS="cfq"
-          fi
-          if [ "${{ inputs.aio_opt }}" = "true" ]; then
-            AIO_STATUS="yes"
-          else
-            AIO_STATUS="no"
-          fi
-          if [ "${{ inputs.wireguard }}" = "true" ]; then
-            WG_STATUS="yes"
-          else
-            WG_STATUS="no"
-          fi
-          if [ "${{ inputs.nosec }}" = "true" ]; then
-            SEC_STATUS="stripped"
-          else
-            SEC_STATUS="kept"
-          fi
-          if [ "${{ inputs.nodebug }}" = "true" ]; then
-            DBG_STATUS="stripped"
-          else
-            DBG_STATUS="full"
-          fi
-          echo "MD5=$MD5" >> $GITHUB_ENV
-          echo "KSU_STATUS=$KSU_STATUS" >> $GITHUB_ENV
-          echo "ZIP_NAME=$ZIP" >> $GITHUB_ENV
-          CAPTION=$(printf '<i>build successfully.</i>\n\nlucreticus kernel\n\ndevice: %s\nprofile: %s\niosched: %s\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\nmd5: %s\ncommit: %s' "${{ env.DEVICE_CHOICE }}" "${{ matrix.profile }}" "$ZEN_STATUS" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$MD5" "${{ github.sha }}")
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
-            -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-            -F document=@"$ZIP" \
-            -F parse_mode=HTML \
-            -F caption="$CAPTION"
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: lucreticus-lrc1-${{ env.DEVICE_CHOICE }}-${{ matrix.profile }}-${{ inputs.ksu && 'ksu' || 'standard' }}
           path: lucreticus-lrc1-*.zip
+
+  notify:
+    name: Telegram summary
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: builds
+          merge-multiple: true
+
+      - name: Send Telegram summary
+        run: |
+          cd builds
+          if [ "${{ inputs.ksu }}" = "true" ]; then KSU_STATUS="yes"; else KSU_STATUS="no"; fi
+          if [ "${{ inputs.droidspaces }}" = "true" ]; then DS_STATUS="yes"; else DS_STATUS="no"; fi
+          if [ "${{ inputs.nomount }}" = "true" ]; then NM_STATUS="yes"; else NM_STATUS="no"; fi
+          if [ "${{ inputs.zen }}" = "true" ]; then ZEN_STATUS="zen"; else ZEN_STATUS="cfq"; fi
+          if [ "${{ inputs.aio_opt }}" = "true" ]; then AIO_STATUS="yes"; else AIO_STATUS="no"; fi
+          if [ "${{ inputs.wireguard }}" = "true" ]; then WG_STATUS="yes"; else WG_STATUS="no"; fi
+          if [ "${{ inputs.nosec }}" = "true" ]; then SEC_STATUS="stripped"; else SEC_STATUS="kept"; fi
+          if [ "${{ inputs.nodebug }}" = "true" ]; then DBG_STATUS="stripped"; else DBG_STATUS="full"; fi
+          LIST=""
+          COUNT=0
+          for ZIP in lucreticus-lrc1-*.zip; do
+            MD5=$(md5sum "$ZIP" | cut -d ' ' -f 1)
+            REST=${ZIP#lucreticus-lrc1-}
+            DEV=${REST%%-*}
+            REST2=${REST#*-}
+            PROF=${REST2%%-*}
+            COUNT=$((COUNT + 1))
+            LIST=$(printf '%s\n- %s %s — md5: %s' "$LIST" "$DEV" "$PROF" "$MD5")
+            echo "$ZIP $MD5" >> files.txt
+          done
+          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "${{ github.sha }}" "$LIST")
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=$TEXT"
+          while read -r ZIP MD5; do
+            [ -n "$ZIP" ] || continue
+            CAP=$(printf '%s\nmd5: %s' "$ZIP" "$MD5")
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument" \
+              -F chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+              -F document=@"$ZIP" \
+              -F parse_mode=HTML \
+              -F caption="$CAP"
+          done < files.txt
