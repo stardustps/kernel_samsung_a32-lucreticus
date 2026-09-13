@@ -4,8 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: 'Device to build for (a32)'
+        description: 'Device to build for (or all)'
+        required: true
         default: 'a32'
+        type: choice
+        options:
+          - a32
+          - a22
+          - f22
+          - m22
+          - m32
+          - all
       ksu:
         description: 'Add KernelSU?'
         required: true
@@ -79,10 +88,11 @@ permissions:
 
 jobs:
   setup:
-    name: Resolve profiles
+    name: Resolve matrix
     runs-on: ubuntu-latest
     outputs:
       profiles: ${{ steps.set.outputs.profiles }}
+      devices: ${{ steps.set.outputs.devices }}
     steps:
       - id: set
         run: |
@@ -91,17 +101,23 @@ jobs:
           else
             echo "profiles=[\"${{ inputs.profile }}\"]" >> $GITHUB_OUTPUT
           fi
+          if [ "${{ inputs.device }}" = "all" ]; then
+            echo 'devices=["a32", "a22", "f22", "m22", "m32"]' >> $GITHUB_OUTPUT
+          else
+            echo "devices=[\"${{ inputs.device }}\"]" >> $GITHUB_OUTPUT
+          fi
 
   build:
-    name: Build Kernel ${{ matrix.profile }} ${{ inputs.opt }} ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
+    name: Build Kernel ${{ matrix.device }} ${{ matrix.profile }} ${{ inputs.opt }} ${{ inputs.ksu && 'with KernelSU' || 'standard' }}
     needs: setup
     runs-on: ubuntu-latest
     strategy:
       matrix:
         profile: ${{ fromJSON(needs.setup.outputs.profiles) }}
+        device: ${{ fromJSON(needs.setup.outputs.devices) }}
 
     env:
-      DEVICE_CHOICE: ${{ github.event.inputs.device || 'a32' }}
+      DEVICE_CHOICE: ${{ matrix.device }}
       KSU_CHOICE: ${{ inputs.ksu }}
       PROFILE_CHOICE: ${{ matrix.profile }}
 
