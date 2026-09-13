@@ -116,6 +116,16 @@ on:
           - '250'
           - '300'
           - '1000'
+      gpu_clock:
+        description: 'GPU clock mode [EXPERIMENT]'
+        required: true
+        default: 'stock'
+        type: choice
+        options:
+          - stock
+          - overclock
+          - downclock
+          - max
 
 permissions:
   contents: write
@@ -353,6 +363,12 @@ jobs:
             300) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_300 --disable CONFIG_HZ_100 --disable CONFIG_HZ_250 --disable CONFIG_HZ_1000 --set-val CONFIG_HZ 300 ;;
             1000) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_HZ_1000 --disable CONFIG_HZ_100 --disable CONFIG_HZ_250 --disable CONFIG_HZ_300 --set-val CONFIG_HZ 1000 ;;
           esac
+          case "${{ inputs.gpu_clock }}" in
+            overclock) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_LUCRETICUS_OC_GPU ;;
+            downclock) scripts/config --file $CFGDIR/compiled_defconfig --disable CONFIG_LUCRETICUS_OC_GPU ;;
+            max) scripts/config --file $CFGDIR/compiled_defconfig --enable CONFIG_LUCRETICUS_OC_GPU --enable CONFIG_LUCRETICUS_OC_CCI --enable CONFIG_LUCRETICUS_OC_RAMDVFS ;;
+            *) scripts/config --file $CFGDIR/compiled_defconfig --disable CONFIG_LUCRETICUS_OC_GPU ;;
+          esac
           echo '' >> $CFGDIR/compiled_defconfig
           echo '# CONFIG_ALWAYS_ENFORCE is not set' >> $CFGDIR/compiled_defconfig
           echo 'CONFIG_ALWAYS_PERMISSIVE=y' >> $CFGDIR/compiled_defconfig
@@ -406,6 +422,9 @@ jobs:
             SUFFIX="$SUFFIX-uv"
           fi
           SUFFIX="$SUFFIX-${{ inputs.hz }}hz"
+          if [ "${{ inputs.gpu_clock }}" != "stock" ]; then
+            SUFFIX="$SUFFIX-gpu${{ inputs.gpu_clock }}"
+          fi
           if [ "${{ inputs.wireguard }}" = "true" ]; then
             SUFFIX="$SUFFIX-wg"
           fi
@@ -462,6 +481,7 @@ jobs:
           if [ "${{ inputs.docker }}" = "true" ]; then DOCKER_STATUS="yes"; else DOCKER_STATUS="no"; fi
           CLOCK_STATUS="${{ inputs.clock }}"
           HZ_STATUS="${{ inputs.hz }}"
+          GPU_CLOCK_STATUS="${{ inputs.gpu_clock }}"
           LIST=""
           COUNT=0
           for ZIP in lucreticus-lrc1-*.zip; do
@@ -474,7 +494,7 @@ jobs:
             LIST=$(printf '%s\n- %s %s — md5: %s' "$LIST" "$DEV" "$PROF" "$MD5")
             echo "$ZIP $MD5" >> files.txt
           done
-          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncache: %s\nbypass charging: %s\ndocker: %s\nclock: %s\ntick: %sHz\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$CACHE_STATUS" "$BYPASS_STATUS" "$DOCKER_STATUS" "$CLOCK_STATUS" "$HZ_STATUS" "${{ github.sha }}" "$LIST")
+          TEXT=$(printf '<i>build successfully.</i>\n\nlucreticus kernel (%s builds)\n\nkernel version: 5.10.239 (spoofed)\nlucreticus patch version: lrc1\n\ncompiler: ZyC Clang 14 -%s\nlto: %s\nkernelsu integrated: %s\ndroidspaces: %s\nnomount: %s\niosched: %s\naio optimized: %s\nwireguard: %s\nsamsung security: %s\ndebug: %s\ncache: %s\nbypass charging: %s\ndocker: %s\nclock: %s\ntick: %sHz\ngpu clock: %s\ncommit: %s\n%s' "$COUNT" "${{ inputs.opt }}" "${{ inputs.lto }}" "$KSU_STATUS" "$DS_STATUS" "$NM_STATUS" "$ZEN_STATUS" "$AIO_STATUS" "$WG_STATUS" "$SEC_STATUS" "$DBG_STATUS" "$CACHE_STATUS" "$BYPASS_STATUS" "$DOCKER_STATUS" "$CLOCK_STATUS" "$HZ_STATUS" "$GPU_CLOCK_STATUS" "${{ github.sha }}" "$LIST")
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
             --data-urlencode "parse_mode=HTML" \
